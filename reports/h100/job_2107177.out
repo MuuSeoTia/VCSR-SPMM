@@ -1,0 +1,11 @@
+-- Configuring done (0.2s)
+-- Generating done (0.2s)
+-- Build files have been written to: /home/tiahi.m/projects/sparse-vs-dense-matmul/build_h100
+[100%] Built target spmm_vcsr
+[INFO] Using matrix: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+-rw-r--r-- 1 tiahi.m users 57M Jan 18  2011 /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+[OK] CSV: reports/h100/bench_20251006_062148.csv
+Loading MTX: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+Matrix: 62451 x 62451, nnz=2034917
+VCSR (seg):    5.323 ms     97.87 GFLOP/s  [segw=4,bundle=32,tileK=128,groups=29825]
+slurmstepd: error: *** JOB 2107177 ON d4041 CANCELLED AT 2025-10-06T06:56:47 DUE TO TIME LIMIT ***

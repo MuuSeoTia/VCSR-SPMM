@@ -1,0 +1,26 @@
+-- Configuring done (0.3s)
+-- Generating done (0.3s)
+-- Build files have been written to: /home/tiahi.m/projects/sparse-vs-dense-matmul/build_a100
+[ 33%] Building CXX object CMakeFiles/spmm_vcsr.dir/src/main.cpp.o
+[ 66%] Building CUDA object CMakeFiles/spmm_vcsr.dir/src/kernels.cu.o
+/home/tiahi.m/projects/sparse-vs-dense-matmul/include/mmio.hpp(26): warning #177-D: variable "header_ok" was declared but never referenced
+  bool header_ok=false;
+       ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+ptxas info    : 0 bytes gmem
+ptxas info    : Compiling entry function '_Z16vcsr_spmm_kerneliiiiiPKiS0_S0_S0_S0_PKfS2_iPfi' for 'sm_80'
+ptxas info    : Function properties for _Z16vcsr_spmm_kerneliiiiiPKiS0_S0_S0_S0_PKfS2_iPfi
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 21 registers, used 1 barriers, 452 bytes cmem[0]
+ptxas info    : Compile time = 103.798 ms
+ptxas info    : Compiling entry function '_Z15csr_spmm_kerneliiiPKiS0_PKfS2_iPfi' for 'sm_80'
+ptxas info    : Function properties for _Z15csr_spmm_kerneliiiPKiS0_PKfS2_iPfi
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers, 420 bytes cmem[0]
+ptxas info    : Compile time = 12.126 ms
+[100%] Linking CXX executable spmm_vcsr
+[100%] Built target spmm_vcsr
+[INFO] Using matrix: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/ASIC_320k/ASIC_320k.mtx
+-rw------- 1 tiahi.m users 77M Jan 30  2007 /home/tiahi.m/projects/sparse-vs-dense-matmul/data/ASIC_320k/ASIC_320k.mtx

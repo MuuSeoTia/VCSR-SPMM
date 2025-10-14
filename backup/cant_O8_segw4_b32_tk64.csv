@@ -1,0 +1,6 @@
+==PROF== Connected to process 589816 (/home/tiahi.m/projects/sparse-vs-dense-matmul/build_a100/spmm_vcsr)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+Loading MTX: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+Matrix: 62451 x 62451, nnz=2034917
+VCSR (seg):    1.151 ms     28.28 GFLOP/s  [segw=4,bundle=32,tileK=64,groups=29825]
+==PROF== Disconnected from process 589816

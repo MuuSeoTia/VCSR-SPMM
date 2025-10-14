@@ -1,0 +1,14 @@
+Loading MTX: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+Matrix: 62451 x 62451, nnz=2034917
+cuSPARSE:      1.185 ms    219.79 GFLOP/s
+cuSPARSE:      1.208 ms    215.58 GFLOP/s
+cuSPARSE:      1.231 ms    211.57 GFLOP/s
+cuSPARSE:      1.254 ms    207.68 GFLOP/s
+cuSPARSE:      1.277 ms    203.95 GFLOP/s
+cuSPARSE:      1.300 ms    200.35 GFLOP/s
+cuSPARSE:      1.323 ms    196.88 GFLOP/s
+cuSPARSE:      1.346 ms    193.52 GFLOP/s
+cuSPARSE:      1.369 ms    190.26 GFLOP/s
+cuSPARSE:      1.392 ms    187.14 GFLOP/s
+
+

@@ -1,0 +1,3 @@
+Loading MTX: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/cant/cant/cant.mtx
+Matrix: 62451 x 62451, nnz=2034917
+VCSR (seg):   17.474 ms     59.62 GFLOP/s  [segw=4,bundle=32,tileK=64,groups=29825]

@@ -1,0 +1,12 @@
+Loading MTX: /home/tiahi.m/projects/sparse-vs-dense-matmul/data/ASIC_320k/ASIC_320k.mtx
+Matrix: 321821 x 321821, nnz=2635364
+cuSPARSE:      9.669 ms      4.36 GFLOP/s
+cuSPARSE:      9.712 ms      4.34 GFLOP/s
+cuSPARSE:      9.754 ms      4.32 GFLOP/s
+cuSPARSE:      9.796 ms      4.30 GFLOP/s
+cuSPARSE:      9.838 ms      4.29 GFLOP/s
+cuSPARSE:      9.880 ms      4.27 GFLOP/s
+cuSPARSE:      9.922 ms      4.25 GFLOP/s
+cuSPARSE:      9.964 ms      4.23 GFLOP/s
+cuSPARSE:     10.006 ms      4.21 GFLOP/s
+cuSPARSE:     10.048 ms      4.20 GFLOP/s

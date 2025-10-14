@@ -1,0 +1,3 @@
+gpu,mtx,O,algo,ms,gflop_s,segw,bundle,tileK,repeat
+A100,/home/tiahi.m/projects/sparse-vs-dense-matmul/data/ASIC_320k/ASIC_320k.mtx,8,cusparse,11.993,3.52,4,32,128,10
+A100,/home/tiahi.m/projects/sparse-vs-dense-matmul/data/ASIC_320k/ASIC_320k.mtx,8,csr,86.589,0.49,4,32,128,10
