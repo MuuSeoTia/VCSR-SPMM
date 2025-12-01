@@ -44,46 +44,59 @@ __global__ void vcsr_spmm_kernel(
     const int* __restrict__ lcol,
     const float* __restrict__ aval,
     const float* __restrict__ B, int ldb,
-    float* __restrict__ C, int ldc){
-  int g = blockIdx.x; if(g>=num_groups) return;
-  int k0 = blockIdx.y * tileK;
-  int lane = threadIdx.x; // 0..bundle-1
-  if(lane>=bundle) return;
+    float* __restrict__ C, int ldc)
+{
+  int g = blockIdx.x;
+  if (g >= num_groups) return;
 
-  int row = group_rows[g*bundle + lane];
-  if(row<0) return; // inactive lane in padded group
+  const int k0   = blockIdx.y * tileK;
+  const int lane = threadIdx.x;  // 0..bundle-1 (blockDim.x == bundle)
 
-  int base = group_ptr[g];
-  int depth = group_depth[g];
-  int seg_base = group_seg_base[g];
+  // NOTE: Do NOT early-return before the barrier; compute a mask instead.
+  const int row = (lane < bundle) ? group_rows[g * bundle + lane] : -1;
+  const bool lane_active = (lane < bundle) && (row >= 0);
 
-  extern __shared__ float smem[]; // size = segw*tileK
-  // Load B tile for this segment rows [seg_base .. seg_base+segw)
-  for(int srow=threadIdx.x; srow<segw; srow+=blockDim.x){
-    const float* Bj = B + (seg_base + srow)*ldb + k0;
-    float* S = smem + srow*tileK;
+  const int base     = group_ptr[g];
+  const int depth    = group_depth[g];
+  const int seg_base = group_seg_base[g];
+
+  extern __shared__ float smem[]; // size = segw * tileK
+
+  // Cooperative load of B tile into shared memory.
+  // Everyone participates; bounds-guard O so we never read past the last column.
+  for (int srow = threadIdx.x; srow < segw; srow += blockDim.x) {
+    const float* __restrict__ Bj = B + (seg_base + srow) * ldb + k0;
+    float* __restrict__ S = smem + srow * tileK;
     #pragma unroll 1
-    for(int kk=0; kk<tileK; ++kk){
-      int k = k0 + kk; if(k < O) S[kk] = Bj[kk];
+    for (int kk = 0; kk < tileK; ++kk) {
+      const int k = k0 + kk;
+      // Guard O range; write 0 if out-of-range to keep consumers safe.
+      S[kk] = (k < O) ? Bj[kk] : 0.0f;
     }
   }
-  __syncthreads();
 
-  // Accumulate into registers for this row and k-tile
-  // We process packed entries depth-wise; each depth contributes one (lcol, val) per lane (or lcol=-1)
-  // Initialize a local tile accumulator per lane in registers
-  // To limit register pressure, process directly into C (fewer regs) — acceptable for starter
+  __syncthreads();  // all threads reach here (no early returns)
 
-  for(int d=0; d<depth; ++d){
-    int idx = base + d*bundle + lane;
-    int lc = lcol[idx];
-    float a = aval[idx];
-    if(lc>=0){
-      float* Crow = C + row*ldc + k0;
-      const float* SB = smem + lc*tileK;
-      #pragma unroll 1
-      for(int kk=0; kk<tileK; ++kk){
-        int k = k0 + kk; if(k < O) Crow[kk] += a * SB[kk];
+  // Depth-wise accumulation; mask inactive lanes; also guard lc range.
+  #pragma unroll 1
+  for (int d = 0; d < depth; ++d) {
+    // Linear index in packed structure
+    const int idx = base + d * bundle + lane;
+
+    // Lanes without work simply skip compute but still iterate uniformly
+    if (lane_active) {
+      const int   lc = lcol[idx];
+      const float a  = aval[idx];
+
+      if (lc >= 0 && lc < segw) {
+        float* __restrict__ Crow       = C + row * ldc + k0;
+        const float* __restrict__ SB   = smem + lc * tileK;
+
+        #pragma unroll 1
+        for (int kk = 0; kk < tileK; ++kk) {
+          const int k = k0 + kk;
+          if (k < O) Crow[kk] += a * SB[kk];
+        }
       }
     }
   }
@@ -105,10 +118,20 @@ void run_csr_spmm_gpu(const int M, const int* d_rowptr, const int* d_col, const 
 }
 
 void run_vcsr_spmm_gpu(const VCSRSpMM &V, const float* dB, int O, int tileK, float* dC, cudaStream_t st, float &ms){
-  int num_groups = (int)V.group_depth.size();
-  int gx = num_groups; int gy = (O + tileK - 1)/tileK;
-  dim3 grid(gx, gy); dim3 block(V.bundle, 1);
-  size_t shmem = (size_t)V.segw * tileK * sizeof(float);
+  
+  const int num_groups = (int)V.group_depth.size();
+  const dim3 grid(num_groups, (O + tileK - 1) / tileK);
+  const dim3 block(V.bundle, 1);
+  const size_t shmem = (size_t)V.segw * tileK * sizeof(float);
+
+  // Allow large dynamic shared memory if needed
+  int maxDynShmem = 0;
+  cudaDeviceGetAttribute(&maxDynShmem, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+  if ((int)shmem <= maxDynShmem) {
+    cudaFuncSetAttribute(vcsr_spmm_kernel,
+                         cudaFuncAttributeMaxDynamicSharedMemorySize,
+                         (int)shmem);
+  }
 
   // Copy packed arrays to device (use cudaMallocManaged for brevity)
   int *d_group_ptr,*d_group_depth,*d_group_seg_base,*d_group_rows,*d_lcol;
