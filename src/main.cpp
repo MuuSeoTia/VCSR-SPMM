@@ -13,13 +13,22 @@
 void run_csr_spmm_gpu(const int M, const int* d_rowptr, const int* d_col, const float* d_val,
                       const float* dB, int O, float* dC, cudaStream_t st, float &ms);
 void run_vcsr_spmm_gpu(const VCSRSpMM &V, const float* dB, int O, int tileK, float* dC, cudaStream_t st, float &ms);
+void run_aspt_spmm_gpu(const int   M,
+                       const int*  d_rowptr,
+                       const int*  d_col,
+                       const float* d_val,
+                       const float* dB,
+                       int         O,
+                       float*      dC,
+                       cudaStream_t st,
+                       float&      ms);
 float run_cusparse_spmm(const int M, const int N, const int nnz,
                         const int* d_rowptr, const int* d_col, const float* d_val,
                         const float* dB, int O, float* dC);
 
 
 static void usage(){
-  printf("Usage: spmm_vcsr --mtx file.mtx --O 128 [--segw 4] [--bundle 32] [--tileK 64] [--repeat 10] [--algo all|csr|cusparse|vcsr]\n");
+  printf("Usage: spmm_vcsr --mtx file.mtx --O 128 [--segw 4] [--bundle 32] [--tileK 64] [--repeat 10] [--algo all|csr|cusparse|vcsr|aspt|fast]\n");
 }
 
 int main(int argc, char** argv){

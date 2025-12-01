@@ -13,6 +13,8 @@ set(CMAKE_CUDA_ARCHITECTURES ${SM_ARCH})
 add_executable(spmm_vcsr
   src/main.cpp
   src/kernels.cu
+  src/aspt.cu
+  src/fastspmm.cu
 )
 target_include_directories(spmm_vcsr PRIVATE include)
 
