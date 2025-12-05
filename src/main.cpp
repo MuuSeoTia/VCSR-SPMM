@@ -6,6 +6,7 @@
 #include <cmath>
 #include <getopt.h>
 #include "mmio.hpp"
+#include "fastspmm.hpp"
 #include "csr.hpp"
 #include "vcsr.hpp"
 
@@ -22,6 +23,9 @@ void run_aspt_spmm_gpu(const int   M,
                        float*      dC,
                        cudaStream_t st,
                        float&      ms);
+void run_fastspmm_gpu(const FastCST &cst,
+                      const float* dB, int O,
+                      float* dC, cudaStream_t st, float &ms);
 float run_cusparse_spmm(const int M, const int N, const int nnz,
                         const int* d_rowptr, const int* d_col, const float* d_val,
                         const float* dB, int O, float* dC);
@@ -84,15 +88,28 @@ int main(int argc, char** argv){
 
   auto gflops = [&](double ms){ return (2.0 * csr.nnz * O) / (ms*1e6); };
 
-  if(algo=="all" || algo=="cusparse"){
-    float ms_sum=0; 
+   FastCST fast_cst;
+  if (algo == "all" || algo == "fast") {
+    fast_cst = build_cst_from_csr(csr);
+    upload_cst_to_device(fast_cst);
+}
+  if (algo == "all" || algo == "cusparse") {
+    float ms_sum = 0.0f;
 
-    for(int it=0; it<repeat; ++it){ 
+    for (int it = 0; it < repeat; ++it) {
         cudaMemset(dC, 0, bytesC);
-        ms_sum += run_cusparse_spmm(csr.M, csr.N, csr.nnz, d_rowptr, d_col, d_val, dB, O, dC); 
-        double ms = ms_sum / repeat; printf("cuSPARSE:   %8.3f ms  %8.2f GFLOP/s\n", ms, gflops(ms));
-  }
-} 
+        ms_sum += run_cusparse_spmm(
+            csr.M, csr.N, csr.nnz,
+            d_rowptr, d_col, d_val,
+            dB, O, dC
+        );
+    }
+
+    double msavg = ms_sum / repeat;
+    printf("cuSPARSE:   %8.3f ms  %8.2f GFLOP/s\n",
+           msavg, gflops(msavg));
+}
+
 
   if(algo=="all" || algo=="csr"){
     float ms_sum=0, ms; 
@@ -114,9 +131,48 @@ int main(int argc, char** argv){
       msavg, gflops(msavg), segw, bundle, tileK, V.group_depth.size());
   }
 
+
+if (algo == "all" || algo == "fast") {
+    float ms_sum = 0.0f, ms;
+
+    for (int it = 0; it < repeat; ++it) {
+        cudaMemset(dC, 0, bytesC);
+        run_fastspmm_gpu(fast_cst, dB, O, dC, st, ms);
+        ms_sum += ms;
+    }
+
+    double msavg = ms_sum / repeat;
+    printf("FastSpMM:   %8.3f ms  %8.2f GFLOP/s\n",
+           msavg, gflops(msavg));
+}
+
+  if (algo == "all" || algo == "aspt") {
+    float ms_sum = 0.0f, ms;
+
+    for (int it = 0; it < repeat; ++it) {
+        cudaMemset(dC, 0, bytesC);
+        run_aspt_spmm_gpu(
+            csr.M,
+            d_rowptr, d_col, d_val,
+            dB, O, dC,
+            st, ms
+        );
+        ms_sum += ms;
+    }
+
+    double msavg = ms_sum / repeat;
+    printf("ASpT:       %8.3f ms  %8.2f GFLOP/s\n",
+           msavg, gflops(msavg));
+}
+
+
   cudaStreamDestroy(st);
   cudaFree(dB); cudaFree(dC);
   cudaFree(d_rowptr); cudaFree(d_col); cudaFree(d_val);
+  if (algo == "all" || algo == "fast") {
+    destroy_cst(fast_cst);
+  }
+
   return 0;
 
 }

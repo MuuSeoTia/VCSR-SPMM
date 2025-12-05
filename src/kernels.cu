@@ -168,41 +168,68 @@ void run_vcsr_spmm_gpu(const VCSRSpMM &V, const float* dB, int O, int tileK, flo
 
 // Simple cuSPARSE SpMM wrapper (CSR x Dense)
 float run_cusparse_spmm(const int M, const int N, const int nnz,
-                         const int* d_rowptr, const int* d_col, const float* d_val,
-                         const float* dB, int O, float* dC){
-  cusparseHandle_t h; cusparseCreate(&h);
-  cudaStream_t st; cudaStreamCreate(&st); cusparseSetStream(h, st);
+                        const int* d_rowptr, const int* d_col, const float* d_val,
+                        const float* dB, int O, float* dC)
+{
+  cusparseHandle_t h; 
+  cusparseCreate(&h);
 
-  // Descriptors
+  cudaStream_t st; 
+  cudaStreamCreate(&st); 
+  cusparseSetStream(h, st);
+
   cusparseSpMatDescr_t matA;
   cusparseDnMatDescr_t matB, matC;
-  size_t bufferSize=0; void* dBuffer=nullptr;
+  size_t bufferSize = 0; 
+  void* dBuffer = nullptr;
 
   cusparseCreateCsr(&matA, M, N, nnz,
                     (void*)d_rowptr, (void*)d_col, (void*)d_val,
                     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                     CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-  cusparseCreateDnMat(&matB, N, O, O, (void*)dB, CUDA_R_32F, CUSPARSE_ORDER_ROW);
-  cusparseCreateDnMat(&matC, M, O, O, (void*)dC, CUDA_R_32F, CUSPARSE_ORDER_ROW);
 
-  float alpha=1.f, beta=0.f;
-  cusparseOperation_t opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
+  cusparseCreateDnMat(&matB, N, O, O, (void*)dB,
+                      CUDA_R_32F, CUSPARSE_ORDER_ROW);
+  cusparseCreateDnMat(&matC, M, O, O, (void*)dC,
+                      CUDA_R_32F, CUSPARSE_ORDER_ROW);
 
-  cusparseSpMM_bufferSize(h, opA, CUSPARSE_OPERATION_NON_TRANSPOSE,
+  float alpha = 1.f, beta = 0.f;
+
+  cusparseSpMM_bufferSize(h,
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          CUSPARSE_OPERATION_NON_TRANSPOSE,
                           &alpha, matA, matB, &beta, matC,
-                          CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize);
+                          CUDA_R_32F,
+                          CUSPARSE_SPMM_ALG_DEFAULT,
+                          &bufferSize);
   cudaMalloc(&dBuffer, bufferSize);
 
-  cudaEvent_t a,b; cudaEventCreate(&a); cudaEventCreate(&b);
-  cudaEventRecord(a, st);
-  cusparseSpMM(h, opA, CUSPARSE_OPERATION_NON_TRANSPOSE,
-               &alpha, matA, matB, &beta, matC,
-               CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, dBuffer);
-  cudaEventRecord(b, st); cudaEventSynchronize(b); float ms; cudaEventElapsedTime(&ms,a,b);
+  cudaEvent_t a, b; 
+  cudaEventCreate(&a); 
+  cudaEventCreate(&b);
 
-  cudaEventDestroy(a); cudaEventDestroy(b);
+  cudaEventRecord(a, st);
+  cusparseSpMM(h,
+               CUSPARSE_OPERATION_NON_TRANSPOSE,
+               CUSPARSE_OPERATION_NON_TRANSPOSE,
+               &alpha, matA, matB, &beta, matC,
+               CUDA_R_32F,
+               CUSPARSE_SPMM_ALG_DEFAULT,
+               dBuffer);
+  cudaEventRecord(b, st);
+  cudaEventSynchronize(b);
+
+  float ms = 0.f;
+  cudaEventElapsedTime(&ms, a, b);
+
+  cudaEventDestroy(a); 
+  cudaEventDestroy(b);
   cudaFree(dBuffer);
-  cusparseDestroySpMat(matA); cusparseDestroyDnMat(matB); cusparseDestroyDnMat(matC);
-  cusparseDestroy(h); cudaStreamDestroy(st);
+  cusparseDestroySpMat(matA); 
+  cusparseDestroyDnMat(matB); 
+  cusparseDestroyDnMat(matC);
+  cusparseDestroy(h); 
+  cudaStreamDestroy(st);
+
   return ms;
 }

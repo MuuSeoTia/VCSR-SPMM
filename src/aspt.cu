@@ -1,9 +1,10 @@
-// aspt_spmm.cu
+// aspt.cu
 // ASpT-style CSR SpMM baseline using the "ssparse" warp-shuffle kernel,
 // adapted to your SpMM harness (float, row-major B and C).
-
+#include <cstdlib>
 #include <cuda_runtime.h>
 #include <cstdio>
+#include <cuda.h>
 
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(x)                                                         \
@@ -140,7 +141,8 @@ void aspt_spmm_kernel(const int  M,
   vout[idx * sc + offset2] = r2;
 }
 
-// Host wrapper, matching your style (one call, measured via cudaEvents)
+// Host wrapper, matching your harness (driver-style stream)
+//
 // M: #rows of A (and C)
 // d_rowptr: CSR rowptr (length M+1)
 // d_col   : CSR col indices (length nnz)
@@ -148,17 +150,19 @@ void aspt_spmm_kernel(const int  M,
 // dB      : B matrix, row-major, N x O
 // O       : #columns of B/C (must be multiple of 64 for this kernel)
 // dC      : C matrix, row-major, M x O
-inline void run_aspt_spmm_gpu(const int   M,
-                              const int*  d_rowptr,
-                              const int*  d_col,
-                              const float* d_val,
-                              const float* dB,
-                              int         O,
-                              float*      dC,
-                              cudaStream_t st,
-                              float&      ms)
+void run_aspt_spmm_gpu(const int   M,
+                       const int*  d_rowptr,
+                       const int*  d_col,
+                       const float* d_val,
+                       const float* dB,
+                       int         O,
+                       float*      dC,
+                       CUstream    stream,   // <-- matches main.cpp
+                       float&      ms)
 {
-  // This kernel assumes O is a multiple of 2*MFACTOR = 64
+  // Bridge driver stream -> runtime stream
+  cudaStream_t st = reinterpret_cast<cudaStream_t>(stream);
+
   if (O % (2 * MFACTOR) != 0) {
     fprintf(stderr,
             "[ASPT] O=%d is not a multiple of 64, this kernel expects O %% 64 == 0\n",
@@ -173,21 +177,20 @@ inline void run_aspt_spmm_gpu(const int   M,
   dim3 block(SBSIZE, 1, 1);
   dim3 grid(blocks_x, 1, blocks_z);
 
-  // We overwrite C completely, so no need to zero it.
   cudaEvent_t a, b;
-  cudaEventCreate(&a);
-  cudaEventCreate(&b);
+  CUDA_CHECK(cudaEventCreate(&a));
+  CUDA_CHECK(cudaEventCreate(&b));
 
-  cudaEventRecord(a, st);
+  CUDA_CHECK(cudaEventRecord(a, st));
   aspt_spmm_kernel<<<grid, block, 0, st>>>(
       M, O,
       d_rowptr, d_col, d_val,
       dB, dC);
   CUDA_CHECK(cudaGetLastError());
-  cudaEventRecord(b, st);
-  cudaEventSynchronize(b);
-  cudaEventElapsedTime(&ms, a, b);
+  CUDA_CHECK(cudaEventRecord(b, st));
+  CUDA_CHECK(cudaEventSynchronize(b));
+  CUDA_CHECK(cudaEventElapsedTime(&ms, a, b));
 
-  cudaEventDestroy(a);
-  cudaEventDestroy(b);
+  CUDA_CHECK(cudaEventDestroy(a));
+  CUDA_CHECK(cudaEventDestroy(b));
 }
