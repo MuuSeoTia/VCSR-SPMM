@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p sharing
+#SBATCH -p gpu
 #SBATCH --gres=gpu:h200:1
 #SBATCH --time=01:00:00
 #SBATCH -J spmm_h200_bench
