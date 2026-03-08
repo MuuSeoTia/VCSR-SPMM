@@ -1,4 +1,4 @@
-// vcsr_seg.cu - Segmented VCSR with prefetch (streaming B columns)
+// vcsr_opt.cu - VCSR-Augmented: vectorized loads + register tiling
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <vector>
@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include "csr.hpp"
 
-struct VCSRSeg {
+struct VCSROpt {
     int M{0}, N{0};
     int segw{16};
     int bundle{32};
@@ -18,16 +18,14 @@ struct VCSRSeg {
     std::vector<int> lcol;
     std::vector<float> val;
     int num_segments{0};
-    std::vector<int> segment_group_start;
 };
 
-VCSRSeg csr_to_vcsr_seg(const CSR &csr, int segw, int bundle) {
-    VCSRSeg V;
+VCSROpt csr_to_vcsr_opt(const CSR &csr, int segw, int bundle) {
+    VCSROpt V;
     V.M = csr.M; V.N = csr.N; V.segw = segw; V.bundle = bundle;
     int S = (csr.N + segw - 1) / segw;
     V.num_segments = S;
     
-    // Sparse storage: only store rows with actual nonzeros per segment
     struct Entry { int lcol; float v; };
     std::vector<std::unordered_map<int, std::vector<Entry>>> seg_entries(S);
     
@@ -41,7 +39,6 @@ VCSRSeg csr_to_vcsr_seg(const CSR &csr, int segw, int bundle) {
         }
     }
     
-    // Sort entries within each row by local column
     for (int sid = 0; sid < S; ++sid) {
         for (auto &kv : seg_entries[sid]) {
             std::sort(kv.second.begin(), kv.second.end(),
@@ -49,22 +46,16 @@ VCSRSeg csr_to_vcsr_seg(const CSR &csr, int segw, int bundle) {
         }
     }
     
-    // Build groups per segment
-    V.segment_group_start.push_back(0);
-    
     for (int sid = 0; sid < S; ++sid) {
-        // Collect rows with nonzeros in this segment
         std::vector<int> active_rows;
         for (auto &kv : seg_entries[sid]) {
             if (!kv.second.empty()) active_rows.push_back(kv.first);
         }
         
-        // Sort by nnz descending
         std::sort(active_rows.begin(), active_rows.end(), [&](int a, int b) {
             return seg_entries[sid][a].size() > seg_entries[sid][b].size();
         });
         
-        // Create bundles
         for (size_t start = 0; start < active_rows.size(); start += bundle) {
             size_t end = std::min(start + (size_t)bundle, active_rows.size());
             
@@ -79,13 +70,11 @@ VCSRSeg csr_to_vcsr_seg(const CSR &csr, int segw, int bundle) {
             V.group_depth.push_back(depth);
             V.group_seg_base.push_back(sid * segw);
             
-            // Store row IDs
             for (int lane = 0; lane < bundle; ++lane) {
                 int ridx = (int)start + lane;
                 V.group_rows.push_back(ridx < (int)active_rows.size() ? active_rows[ridx] : -1);
             }
             
-            // Pack by depth
             for (int d = 0; d < depth; ++d) {
                 for (int lane = 0; lane < bundle; ++lane) {
                     int ridx = (int)start + lane;
@@ -106,22 +95,24 @@ VCSRSeg csr_to_vcsr_seg(const CSR &csr, int segw, int bundle) {
                 }
             }
         }
-        V.segment_group_start.push_back((int)V.group_depth.size());
     }
     V.group_ptr.push_back((int)V.val.size());
     return V;
 }
 
 // Device data
-static int* d_group_ptr = nullptr;
-static int* d_group_depth = nullptr;
-static int* d_group_seg_base = nullptr;
-static int* d_group_rows = nullptr;
-static int* d_lcol = nullptr;
-static float* d_val = nullptr;
-static bool uploaded = false;
+namespace vcsr_opt_dev {
+    static int* d_group_ptr = nullptr;
+    static int* d_group_depth = nullptr;
+    static int* d_group_seg_base = nullptr;
+    static int* d_group_rows = nullptr;
+    static int* d_lcol = nullptr;
+    static float* d_val = nullptr;
+    static bool uploaded = false;
+}
 
-__global__ void vcsr_seg_prefetch_kernel(
+// VCSR-Aug kernel: vectorized float4 loads + register tiling
+__global__ void vcsr_opt_kernel(
     int O, int tileK, int bundle, int segw, int N,
     int num_groups,
     const int* __restrict__ group_ptr,
@@ -149,16 +140,35 @@ __global__ void vcsr_seg_prefetch_kernel(
     int k_end = min(k0 + tileK, O);
     int actual_tileK = k_end - k0;
     
-    // Load B tile into shared memory: smem[segw][tileK]
+    // Vectorized load of B tile using float4
+    bool aligned = ((k0 & 3) == 0) && ((actual_tileK & 3) == 0);
+    
     for (int srow = threadIdx.x; srow < segw; srow += blockDim.x) {
         int global_row_B = seg_base + srow;
+        float* smem_row = smem + srow * tileK;
+        
         if (global_row_B < N) {
-            for (int kk = 0; kk < actual_tileK; ++kk) {
-                smem[srow * tileK + kk] = B[global_row_B * ldb + k0 + kk];
+            const float* B_row = B + global_row_B * ldb + k0;
+            
+            if (aligned) {
+                // Vectorized float4 load
+                int num_vec = actual_tileK >> 2;
+                for (int v = 0; v < num_vec; ++v) {
+                    float4 val4 = reinterpret_cast<const float4*>(B_row)[v];
+                    smem_row[v*4 + 0] = val4.x;
+                    smem_row[v*4 + 1] = val4.y;
+                    smem_row[v*4 + 2] = val4.z;
+                    smem_row[v*4 + 3] = val4.w;
+                }
+            } else {
+                // Scalar fallback
+                for (int kk = 0; kk < actual_tileK; ++kk) {
+                    smem_row[kk] = B_row[kk];
+                }
             }
         } else {
             for (int kk = 0; kk < actual_tileK; ++kk) {
-                smem[srow * tileK + kk] = 0.0f;
+                smem_row[kk] = 0.0f;
             }
         }
     }
@@ -166,30 +176,74 @@ __global__ void vcsr_seg_prefetch_kernel(
     
     if (row < 0) return;
     
-    // Accumulate
-    float acc[64];  // Max tileK
-    for (int kk = 0; kk < actual_tileK; ++kk) acc[kk] = 0.0f;
+    // Register tiling: 16 accumulators
+    float acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
+    float acc4 = 0, acc5 = 0, acc6 = 0, acc7 = 0;
+    float acc8 = 0, acc9 = 0, acc10 = 0, acc11 = 0;
+    float acc12 = 0, acc13 = 0, acc14 = 0, acc15 = 0;
     
-    for (int d = 0; d < depth; ++d) {
-        int idx = base + d * bundle + lane;
-        int lc = lcol[idx];
-        if (lc >= 0 && lc < segw) {
-            float a = aval[idx];
-            #pragma unroll 8
-            for (int kk = 0; kk < actual_tileK; ++kk) {
-                acc[kk] += a * smem[lc * tileK + kk];
+    // Process in chunks of 16
+    for (int kk_base = 0; kk_base < actual_tileK; kk_base += 16) {
+        int chunk = min(16, actual_tileK - kk_base);
+        
+        // Reset accumulators
+        acc0 = acc1 = acc2 = acc3 = 0;
+        acc4 = acc5 = acc6 = acc7 = 0;
+        acc8 = acc9 = acc10 = acc11 = 0;
+        acc12 = acc13 = acc14 = acc15 = 0;
+        
+        for (int d = 0; d < depth; ++d) {
+            int idx = base + d * bundle + lane;
+            int lc = lcol[idx];
+            if (lc >= 0 && lc < segw) {
+                float a = aval[idx];
+                float* SB = smem + lc * tileK + kk_base;
+                
+                // Fully unrolled accumulation
+                if (chunk > 0)  acc0  += a * SB[0];
+                if (chunk > 1)  acc1  += a * SB[1];
+                if (chunk > 2)  acc2  += a * SB[2];
+                if (chunk > 3)  acc3  += a * SB[3];
+                if (chunk > 4)  acc4  += a * SB[4];
+                if (chunk > 5)  acc5  += a * SB[5];
+                if (chunk > 6)  acc6  += a * SB[6];
+                if (chunk > 7)  acc7  += a * SB[7];
+                if (chunk > 8)  acc8  += a * SB[8];
+                if (chunk > 9)  acc9  += a * SB[9];
+                if (chunk > 10) acc10 += a * SB[10];
+                if (chunk > 11) acc11 += a * SB[11];
+                if (chunk > 12) acc12 += a * SB[12];
+                if (chunk > 13) acc13 += a * SB[13];
+                if (chunk > 14) acc14 += a * SB[14];
+                if (chunk > 15) acc15 += a * SB[15];
             }
         }
-    }
-    
-    // Write to C
-    for (int kk = 0; kk < actual_tileK; ++kk) {
-        atomicAdd(&C[row * ldc + k0 + kk], acc[kk]);
+        
+        // Write results
+        float* C_row = C + row * ldc + k0 + kk_base;
+        if (chunk > 0)  atomicAdd(&C_row[0],  acc0);
+        if (chunk > 1)  atomicAdd(&C_row[1],  acc1);
+        if (chunk > 2)  atomicAdd(&C_row[2],  acc2);
+        if (chunk > 3)  atomicAdd(&C_row[3],  acc3);
+        if (chunk > 4)  atomicAdd(&C_row[4],  acc4);
+        if (chunk > 5)  atomicAdd(&C_row[5],  acc5);
+        if (chunk > 6)  atomicAdd(&C_row[6],  acc6);
+        if (chunk > 7)  atomicAdd(&C_row[7],  acc7);
+        if (chunk > 8)  atomicAdd(&C_row[8],  acc8);
+        if (chunk > 9)  atomicAdd(&C_row[9],  acc9);
+        if (chunk > 10) atomicAdd(&C_row[10], acc10);
+        if (chunk > 11) atomicAdd(&C_row[11], acc11);
+        if (chunk > 12) atomicAdd(&C_row[12], acc12);
+        if (chunk > 13) atomicAdd(&C_row[13], acc13);
+        if (chunk > 14) atomicAdd(&C_row[14], acc14);
+        if (chunk > 15) atomicAdd(&C_row[15], acc15);
     }
 }
 
-void run_vcsr_seg_spmm_gpu(const VCSRSeg &V, const float* dB, int O, int tileK,
-                           float* dC, cudaStream_t st, float &ms, bool use_prefetch) {
+void run_vcsr_opt_spmm_gpu(const VCSROpt &V, const float* dB, int O, int tileK,
+                           float* dC, cudaStream_t st, float &ms) {
+    using namespace vcsr_opt_dev;
+    
     int num_groups = (int)V.group_depth.size();
     if (num_groups == 0) { ms = 0; return; }
     
@@ -219,7 +273,7 @@ void run_vcsr_seg_spmm_gpu(const VCSRSeg &V, const float* dB, int O, int tileK,
     size_t smem_bytes = V.segw * tileK * sizeof(float);
     
     cudaEventRecord(t0, st);
-    vcsr_seg_prefetch_kernel<<<grid, block, smem_bytes, st>>>(
+    vcsr_opt_kernel<<<grid, block, smem_bytes, st>>>(
         O, tileK, V.bundle, V.segw, V.N, num_groups,
         d_group_ptr, d_group_depth, d_group_seg_base, d_group_rows, d_lcol, d_val,
         dB, O, dC, O);
@@ -230,7 +284,8 @@ void run_vcsr_seg_spmm_gpu(const VCSRSeg &V, const float* dB, int O, int tileK,
     cudaEventDestroy(t0); cudaEventDestroy(t1);
 }
 
-void destroy_vcsr_seg_device(cudaStream_t) {
+void destroy_vcsr_opt_device(cudaStream_t) {
+    using namespace vcsr_opt_dev;
     if (d_group_ptr) cudaFree(d_group_ptr);
     if (d_group_depth) cudaFree(d_group_depth);
     if (d_group_seg_base) cudaFree(d_group_seg_base);
